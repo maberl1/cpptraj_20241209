@@ -1,12 +1,8 @@
-//
-// Created by lum on 27.09.23.
-//
-
 #include "Analysis_Febiss.h"
 #include "CpptrajStdio.h"
 #include <iostream>
 #include "ProgressBar.h"
-#include <memory> //needed by make_shared and unique_ptr
+#include <memory>
 
 /** This code is based on the GIGist code: https://github.com/liedllab/gigist.git (27 Sept 2023) as well as on the GIST code of cpptraj: https://github.com/Amber-MD/cpptraj.git
  * Action_GIGIST.cpp: https://github.com/liedllab/gigist/blob/9be781be4099f559a2413a553d3464f48ee32a57/Action_GIGIST.cpp (27 Sept 2023)
@@ -30,7 +26,7 @@ Analysis_Febiss::Analysis_Febiss(DataSet_3D* population, DataSet_3D* tst, DataSe
 dict_(DataDictionary()),
 febissSolventfile_(out)
 {
-info_.solvent.rho0 = refdens; /** from GIGist::getSystemInfo*/
+info_.solvent.rho0 = refdens; 
 info_.solvent.numberSolvent = nsolvent;
 info_.system.nFrames = nframes;
 
@@ -48,19 +44,19 @@ info_.system.nFrames = nframes;
   /** ---------------
    * Other variables:
    * ----------------*/
-  info_.grid.center = result_.at(dict_.getIndex("population"))->Bin().GridCenter(); /** new: coupled to read in data. initially from GIGist::buildGrid */
-  info_.grid.dimensions[0] = result_.at(dict_.getIndex("population"))->NX(); /** new: coupled to read in data. initially from GIGist::buildGrid*/
-  info_.grid.dimensions[1] = result_.at(dict_.getIndex("population"))->NY(); /** new: coupled to read in data. initially from GIGist::buildGrid*/
-  info_.grid.dimensions[2] = result_.at(dict_.getIndex("population"))->NZ(); /** new: coupled to read in data. initially from GIGist::buildGrid*/
-  info_.grid.voxelSize = result_.at(dict_.getIndex("population"))->Bin().DX(); /** new: coupled to read in data. initially from GIGist::buildGrid*/
-  info_.grid.voxelVolume = result_.at(dict_.getIndex("population"))->Bin().VoxelVolume(); /** new: coupled to read in data. initially from GIGist::buildGrid*/
-  info_.grid.nVoxels = info_.grid.dimensions[0]*info_.grid.dimensions[1]*info_.grid.dimensions[2]; /** new: coupled to read in data. initially from GIGist::buildGrid*/
-  info_.grid.start.SetVec(result_.at(dict_.getIndex("population"))->Bin().Corner(0,0,0)[0], result_.at(dict_.getIndex("population"))->Bin().Corner(0,0,0)[1], result_.at(dict_.getIndex("population"))->Bin().Corner(0,0,0)[2]); /** TODO: Where from?*/
+  info_.grid.center = result_.at(dict_.getIndex("population"))->Bin().GridCenter();
+  info_.grid.dimensions[0] = result_.at(dict_.getIndex("population"))->NX(); 
+  info_.grid.dimensions[1] = result_.at(dict_.getIndex("population"))->NY(); 
+  info_.grid.dimensions[2] = result_.at(dict_.getIndex("population"))->NZ(); 
+  info_.grid.voxelSize = result_.at(dict_.getIndex("population"))->Bin().DX(); 
+  info_.grid.voxelVolume = result_.at(dict_.getIndex("population"))->Bin().VoxelVolume(); 
+  info_.grid.nVoxels = info_.grid.dimensions[0]*info_.grid.dimensions[1]*info_.grid.dimensions[2]; 
+  info_.grid.start.SetVec(result_.at(dict_.getIndex("population"))->Bin().Corner(0,0,0)[0], result_.at(dict_.getIndex("population"))->Bin().Corner(0,0,0)[1], result_.at(dict_.getIndex("population"))->Bin().Corner(0,0,0)[2]);
   info_.grid.end.SetVec(
       result_.at(dict_.getIndex("population"))->Bin().Corner(info_.grid.dimensions[0],info_.grid.dimensions[1],info_.grid.dimensions[2])[0],
       result_.at(dict_.getIndex("population"))->Bin().Corner(info_.grid.dimensions[0],info_.grid.dimensions[1],info_.grid.dimensions[2])[1],
       result_.at(dict_.getIndex("population"))->Bin().Corner(info_.grid.dimensions[0],info_.grid.dimensions[1],info_.grid.dimensions[2])[2]
-      ); /** new: coupled to read in data. initially from GIGist::buildGrid*/
+      ); 
 
 # ifdef DEBUG_FEBISS
   mprintf("\t-> Other variables handling complete!\n");
@@ -97,22 +93,22 @@ mprintf("     Usage:\n"
 Analysis::RetType Analysis_Febiss::Setup(ArgList& analyzeArgs, ActionInit& setup, int debugIn)
 {
 /** Arglist handling*/
-info_.solvent.rho0 = analyzeArgs.getKeyDouble("refdens", 0.0329); /** from GIGist::getSystemInfo*/
+info_.solvent.rho0 = analyzeArgs.getKeyDouble("refdens", 0.0329);
 info_.solvent.numberSolvent = analyzeArgs.getKeyInt("solvnum",-1);
 info_.system.nFrames = analyzeArgs.getKeyInt("nframes",-1);
-std::string febissfile = analyzeArgs.GetStringKey("out", "febiss.dat"); /** new: adopted from Action_GIST.cpp*/
+std::string febissfile = analyzeArgs.GetStringKey("out", "febiss.dat"); 
 
 # ifdef DEBUG_FEBISS
 mprintf("\t-> Arglist handling complete!\n");
 # endif
 
 /** Data handling*/
-result_.resize(25); /** number of dict_ entries*/
-result_.at(dict_.getIndex("population")) = (DataSet_3D*)setup.DSL().GetDataSet("gist-population.dx"); /** //renamed to "gist-.." LM20231122 //Without (DataSet_3D*) not working, see Analysis_CrankShaft for example //TODO: Catch needed! //renamed from _norm to _dens LM20230813 */
-result_.at(dict_.getIndex("dTStrans_norm")) = (DataSet_3D*)setup.DSL().GetDataSet("gist-dTStrans_norm.dx"); /** //renamed to "gist-". Also changed to "-dens" instead of "_dens" LM20231122 //renamed from _norm to _dens LM20230813*/
-result_.at(dict_.getIndex("dTSorient_norm")) = (DataSet_3D*)setup.DSL().GetDataSet("gist-dTSorient_norm.dx"); /** //renamed to "gist-". Also changed to "-dens" instead of "_dens" LM20231122  LM20231122 //renamed from _norm to _dens LM20230813*/
-result_.at(dict_.getIndex("Esw_norm")) = (DataSet_3D*)setup.DSL().GetDataSet("gist-Esw_norm.dx"); /** //renamed to "gist-". Also changed to "-dens" instead of "_dens" LM20231122  LM20231122 //renamed from _norm to _dens LM20230813*/
-result_.at(dict_.getIndex("Eww_norm")) = (DataSet_3D*)setup.DSL().GetDataSet("gist-Eww_norm.dx"); /** //renamed to "gist-". Also changed to "-dens" instead of "_dens" LM20231122  LM20231122 //renamed from _norm to _dens LM20230813*/
+result_.resize(6); /** number of dict_ entries*/
+result_.at(dict_.getIndex("population")) = (DataSet_3D*)setup.DSL().GetDataSet("gist-population.dx"); 
+result_.at(dict_.getIndex("dTStrans_norm")) = (DataSet_3D*)setup.DSL().GetDataSet("gist-dTStrans_norm.dx"); 
+result_.at(dict_.getIndex("dTSorient_norm")) = (DataSet_3D*)setup.DSL().GetDataSet("gist-dTSorient_norm.dx"); 
+result_.at(dict_.getIndex("Esw_norm")) = (DataSet_3D*)setup.DSL().GetDataSet("gist-Esw_norm.dx"); 
+result_.at(dict_.getIndex("Eww_norm")) = (DataSet_3D*)setup.DSL().GetDataSet("gist-Eww_norm.dx");
 
 # ifdef DEBUG_FEBISS
 mprintf("\t-> Data handling complete!\n");
@@ -121,19 +117,19 @@ mprintf("\t-> Data handling complete!\n");
 /** ---------------
  * Other variables:
  * ----------------*/
-info_.grid.center = result_.at(dict_.getIndex("population"))->Bin().GridCenter(); /** new: coupled to read in data. initially from GIGist::buildGrid */
-info_.grid.dimensions[0] = result_.at(dict_.getIndex("population"))->NX(); /** new: coupled to read in data. initially from GIGist::buildGrid*/
-info_.grid.dimensions[1] = result_.at(dict_.getIndex("population"))->NY(); /** new: coupled to read in data. initially from GIGist::buildGrid*/
-info_.grid.dimensions[2] = result_.at(dict_.getIndex("population"))->NZ(); /** new: coupled to read in data. initially from GIGist::buildGrid*/
-info_.grid.voxelSize = result_.at(dict_.getIndex("population"))->Bin().DX(); /** new: coupled to read in data. initially from GIGist::buildGrid*/
-info_.grid.voxelVolume = result_.at(dict_.getIndex("population"))->Bin().VoxelVolume(); /** new: coupled to read in data. initially from GIGist::buildGrid*/
-info_.grid.nVoxels = info_.grid.dimensions[0]*info_.grid.dimensions[1]*info_.grid.dimensions[2]; /** new: coupled to read in data. initially from GIGist::buildGrid*/
-info_.grid.start.SetVec(result_.at(dict_.getIndex("population"))->Bin().Corner(0,0,0)[0], result_.at(dict_.getIndex("population"))->Bin().Corner(0,0,0)[1], result_.at(dict_.getIndex("population"))->Bin().Corner(0,0,0)[2]); /** TODO: Where from?*/
+info_.grid.center = result_.at(dict_.getIndex("population"))->Bin().GridCenter(); 
+info_.grid.dimensions[0] = result_.at(dict_.getIndex("population"))->NX(); 
+info_.grid.dimensions[1] = result_.at(dict_.getIndex("population"))->NY(); 
+info_.grid.dimensions[2] = result_.at(dict_.getIndex("population"))->NZ(); 
+info_.grid.voxelSize = result_.at(dict_.getIndex("population"))->Bin().DX(); 
+info_.grid.voxelVolume = result_.at(dict_.getIndex("population"))->Bin().VoxelVolume(); 
+info_.grid.nVoxels = info_.grid.dimensions[0]*info_.grid.dimensions[1]*info_.grid.dimensions[2];
+info_.grid.start.SetVec(result_.at(dict_.getIndex("population"))->Bin().Corner(0,0,0)[0], result_.at(dict_.getIndex("population"))->Bin().Corner(0,0,0)[1], result_.at(dict_.getIndex("population"))->Bin().Corner(0,0,0)[2]);
 info_.grid.end.SetVec(
     result_.at(dict_.getIndex("population"))->Bin().Corner(info_.grid.dimensions[0],info_.grid.dimensions[1],info_.grid.dimensions[2])[0],
     result_.at(dict_.getIndex("population"))->Bin().Corner(info_.grid.dimensions[0],info_.grid.dimensions[1],info_.grid.dimensions[2])[1],
     result_.at(dict_.getIndex("population"))->Bin().Corner(info_.grid.dimensions[0],info_.grid.dimensions[1],info_.grid.dimensions[2])[2]
-    ); /** new: coupled to read in data. initially from GIGist::buildGrid*/
+    ); 
 
 # ifdef DEBUG_FEBISS
 mprintf("\t-> Other variables handling complete!\n");
@@ -142,7 +138,7 @@ mprintf("\t-> Other variables handling complete!\n");
 /** ------------- 
  * File handling:
  * -------------*/
-this->febissSolventfile_ = setup.DFL().AddCpptrajFile(febissfile, "Febiss output"); /** new LM20231213: name for febiss.dat can now be defined. new LM20231122: changed filename to febiss.dat. replaced "createDatasets(argList, actionInit);" in Action_GIGIST.cpp by this->febisssolventfile_ =  ...*/
+this->febissSolventfile_ = setup.DFL().AddCpptrajFile(febissfile, "Febiss output"); 
 
 # ifdef DEBUG_FEBISS
 mprintf("\t-> File handling complete!\n");
@@ -188,16 +184,16 @@ void Analysis_Febiss::placeFebissSolvents(void) {
   std::vector<double> deltaG;
   std::vector<double> pop;
   for (int voxel = 0; voxel < info_.grid.nVoxels; ++voxel) {
-    double dTSt = result_.at(dict_.getIndex("dTStrans_norm"))->operator[](voxel); /** renamed _norm to _dens LM20230813*/
-    double dTSo = result_.at(dict_.getIndex("dTSorient_norm"))->operator[](voxel); /** renamed _norm to _dens LM20230813*/
-    double esw = result_.at(dict_.getIndex("Esw_norm"))->operator[](voxel); /** renamed _norm to _dens LM20230813*/
-    double eww = result_.at(dict_.getIndex("Eww_norm"))->operator[](voxel); /** renamed _norm to _dens LM20230813*/
+    double dTSt = result_.at(dict_.getIndex("dTStrans_norm"))->operator[](voxel); 
+    double dTSo = result_.at(dict_.getIndex("dTSorient_norm"))->operator[](voxel); 
+    double esw = result_.at(dict_.getIndex("Esw_norm"))->operator[](voxel); 
+    double eww = result_.at(dict_.getIndex("Eww_norm"))->operator[](voxel); 
     double value = esw + eww - dTSo - dTSt;
     deltaG.push_back(value);
-    pop.push_back(result_.at(dict_.getIndex("population"))->operator[](voxel)/info_.system.nFrames); /** LM2031206: Added division again, since population is not relpop in GIGist. LM20231130: took back division by rho0, volume, ...//  edited*/
+    pop.push_back(result_.at(dict_.getIndex("population"))->operator[](voxel)/info_.system.nFrames); 
     }
   /* Place solvents to recover 95% of the original density */
-  int solventToPosition = static_cast<int>(round(info_.solvent.numberSolvent * 0.95 / 3)); /** edited*/
+  int solventToPosition = static_cast<int>(round(info_.solvent.numberSolvent * 0.95 / 3)); 
   mprintf("Placing %d FEBISS solvents\n", solventToPosition);
   ProgressBar progBarFebiss(solventToPosition);
   /* cycle to position all solvents */
@@ -221,13 +217,13 @@ void Analysis_Febiss::placeFebissSolvents(void) {
     int shellNum = 0;
     int maxShellNum = shellcontainerKeys_.size() - 1;
     /* not enough density and not reached limit */
-    while (densityValue < 1 && /** edited*/
+    while (densityValue < 1 && 
            shellNum < maxShellNum
     ) {
       densityValueOld = densityValue;
-      ++shellNum; /** INFO: stepwise increasing of shellnumber, i.e. going from the center of the grid to the border. LM231001*/
+      ++shellNum; 
       /* new density by having additional solventshell */
-      densityValue = addSolventShell(densityValue, pop, max_dens_voxel, shellNum); /** edited*/
+      densityValue = addSolventShell(densityValue, pop, max_dens_voxel, shellNum); 
     }
 
     #ifdef DEBUG_FEBISS
@@ -238,7 +234,7 @@ void Analysis_Febiss::placeFebissSolvents(void) {
     double weightedDeltaG = assignDensityWeightedDeltaG(
         max_dens_voxel, shellNum, densityValue, densityValueOld, pop, deltaG);
     /* write new solvent center to pdb */
-    writeout(max_dens_voxel, voxelCoords, weightedDeltaG); /** edited*/
+    writeout(max_dens_voxel, voxelCoords, weightedDeltaG); 
     /* subtract density in included shells */
     subtractSolvent(pop, max_dens_voxel, shellNum, densityValue, densityValueOld);
     // cycle of placed solvent molecules
@@ -403,7 +399,7 @@ double Analysis_Febiss::assignDensityWeightedDeltaG(
   /* Get percentage of how much of the last shell shall be accounted for */
   double percentage = 1.0;
   if (last_shell != 0.0)
-    percentage -= (densityValue - 1) / last_shell; /** edited*/
+    percentage -= (densityValue - 1) / last_shell; 
   /* identical to above but only last shell and percentage */
   auto outerShell = std::make_shared<std::vector<int>>(
       shellcontainer_[shellcontainerKeys_[shellNum]]);
@@ -417,7 +413,7 @@ double Analysis_Febiss::assignDensityWeightedDeltaG(
     mprintf("%i (outer shell): %8.3f (percentage = %8.3f)   ", shellNum, value * info_.grid.voxelVolume * info_.solvent.rho0, percentage);
     #endif
 
-  return value * info_.grid.voxelVolume * info_.solvent.rho0; /** edited*/
+  return value * info_.grid.voxelVolume * info_.solvent.rho0;
 }
 
 /**

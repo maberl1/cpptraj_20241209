@@ -1,7 +1,3 @@
-//
-// Created by lum on 27.09.23.
-//
-
 #ifndef INC_ANALYSIS_FEBISS_H
 #define INC_ANALYSIS_FEBISS_H
 #include "Analysis.h"
@@ -9,7 +5,6 @@
 #include <map>
 #include <array>
 #include "ProgressBar.h"
-//#include "DataSet_GridFlt.h" /** inherits <algorithm> for std::max_element*/
 #include <algorithm>
 
 
@@ -17,43 +12,20 @@
 
 /**
  * Data Dictionary helper class.
- * The different atoms of the solvent can be added to the
- * dictionary via the add command.
  */
 class DataDictionary {
 private:
   std::vector<std::string> names;
+
 public:
-  /**
-   * Constructor creates the initial data points, which will always be the same
-   * for each GIST run.
-   */
+
   DataDictionary() {
     this->names.push_back("population");
     this->names.push_back("dTStrans_norm");
-    this->names.push_back("dTStrans_dens");
     this->names.push_back("dTSorient_norm");
-    this->names.push_back("dTSorient_dens");
     this->names.push_back("dTSsix_norm");
-    this->names.push_back("dTSsix_dens");
-    this->names.push_back("Eww");
     this->names.push_back("Eww_norm");
-    this->names.push_back("Eww_dens");
-    this->names.push_back("Esw");
     this->names.push_back("Esw_norm");
-    this->names.push_back("Esw_dens");
-    this->names.push_back("dipole_x");
-    this->names.push_back("dipole_y");
-    this->names.push_back("dipole_z");
-    this->names.push_back("dipole_xtemp");
-    this->names.push_back("dipole_ytemp");
-    this->names.push_back("dipole_ztemp");
-    this->names.push_back("dipole_g");
-    this->names.push_back("order");
-    this->names.push_back("order_norm");
-    this->names.push_back("neighbour");
-    this->names.push_back("neighbour_dens");
-    this->names.push_back("neighbour_norm");
   }
 
   /**
@@ -129,16 +101,9 @@ class Analysis_Febiss : public Analysis {
         struct System {
             int nFrames = 0; /** defined in Setup.*/
         } system;
-        struct Solute {
-            int numberSoluteAtoms = 0; /** built up in DoAction -> writeOutSolute*/
-        } solute;
         struct Solvent {
             double rho0 = 0.0; /** defined in Setup.*/
-            std::string centralatom = "O"; /** new: label of central atom to be placed. default: O for use with water*/
-            int solventAtomCounter_; /** adopted from Action_GIGIST.h. There it is a standalone std::vector<int> variable.*/
-            //int rigidAtomsN = 3; /** new: how many rigidatoms shall be defined. TODO: make it constant 3 if needed at all*/
             int numberSolvent = 0; /** defined in Setup.*/
-            //int numberSolventAtoms = 0; /** defined in Init.*/
         } solvent;
         struct Grid {
             double voxelSize = 0.0; /** defined in Setup.*/
@@ -151,30 +116,30 @@ class Analysis_Febiss : public Analysis {
         } grid;
     } info_;
 
-  std::vector<DataSet_3D*> result_; /** Adopted from Action_GIGIST.h. This variable is where GIST data is loaded into.*/
-  CpptrajFile *febissSolventfile_; /** Adopted from Action_GIGIST.h. This file contains information on the energy and the position of the solvent molecules.*/
-  std::map<double, std::vector<int>> shellcontainer_; /** Adopted from Action_GIGIST.h. */
-  std::vector<double> shellcontainerKeys_; /** Adopted from Action_GIGIST.h. */
-  DataDictionary dict_; /** Adopted from Action_GIGIST.h. */
+  std::vector<DataSet_3D*> result_; /** This variable is where GIST data is loaded into.*/
+  CpptrajFile *febissSolventfile_; /** This file contains information on the energy and the position of the solvent molecules.*/
+  std::map<double, std::vector<int>> shellcontainer_; 
+  std::vector<double> shellcontainerKeys_; 
+  DataDictionary dict_; 
 
 
   /** -----------
       * Functions
       *----------*/
 
-  Vec3 coordsFromIndex(const int); /** Adopted from Action_GIGIST.h */
+  Vec3 coordsFromIndex(const int); 
 
-  void placeFebissSolvents(void); /** Adopted from Action_GIGIST.h */
+  void placeFebissSolvents(void); 
   
-  void determineGridShells(void); /** Adopted from Action_GIGIST.h */
+  void determineGridShells(void); 
 
   double assignDensityWeightedDeltaG(const int, const int, const double, const double, const std::vector<double>&, const std::vector<double>&);
 
   double addSolventShell(double&, const std::vector<double>&, const int, const int);
 
-  void writeout(const int, const Vec3&, const double); /** Adopted from Action_GIGIST.h and edited.*/
+  void writeout(const int, const Vec3&, const double); 
 
-  void subtractSolvent(std::vector<double> &, const int, const int, const double, const double); /** Adopted from Action_GIGIST.h and edited.*/
+  void subtractSolvent(std::vector<double> &, const int, const int, const double, const double); 
 
 };
 #endif
