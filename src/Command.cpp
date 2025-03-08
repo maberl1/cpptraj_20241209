@@ -212,6 +212,7 @@
 #include "Analysis_TICA.h"
 #include "Analysis_CalcDiffusion.h"
 #include "Analysis_Project.h"
+#include "Analysis_Febiss.h"
 
 CmdList Command::commands_ = CmdList();
 
@@ -431,6 +432,7 @@ void Command::Init() {
   Command::AddCmd( new Analysis_Matrix(),      Cmd::ANA, 2, "diagmatrix", "matrix" );
   Command::AddCmd( new Analysis_Divergence(),  Cmd::ANA, 1, "divergence" );
   Command::AddCmd( new Analysis_EvalPlateau(), Cmd::ANA, 1, "evalplateau" );
+  Command::AddCmd( new Analysis_Febiss(),      Cmd::ANA, 1, "febiss" );
   Command::AddCmd( new Analysis_FFT(),         Cmd::ANA, 1, "fft" );
   Command::AddCmd( new Analysis_HausdorffDistance,Cmd::ANA,1,"hausdorff" );
   Command::AddCmd( new Analysis_Hist(),        Cmd::ANA, 2, "hist", "histogram" );

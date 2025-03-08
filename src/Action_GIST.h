@@ -8,6 +8,7 @@
 #include "CharMask.h"
 #include "GridBin.h"
 #include "PairList.h"
+#include "Analysis_Febiss.h"
 #include <map>
 #ifdef CUDA
 #include "cuda_kernels/GistCudaSetup.cuh"
@@ -19,6 +20,7 @@ class DataSet_3D;
 class DataSet_MatrixFlt;
 class DataSet_GridFlt;
 class DataSet_GridDbl;
+class Analysis_Febiss;
 
 /// Class for applying Grid Inhomogenous Solvation Theory
 /** \author Daniel R. Roe
@@ -46,6 +48,7 @@ class Action_GIST : public Action {
     typedef std::vector<int> Iarray;
     typedef std::vector<Farray> Xarray;
     typedef std::vector<double> Darray;
+    typedef std::vector<Vec3> Varray;
 
     struct SolventInfo
     {
@@ -211,6 +214,7 @@ class Action_GIST : public Action {
     // GIST float grid datasets
     DataSet_3D* gO_;        ///< Solvent oxygen density
     DataSet_3D* gH_;        ///< Solvent hydrogen density
+    DataSet_3D* pop_;       ///< Amount of solvents in this voxel
     DataSet_3D* Esw_;       ///< Solute-water energy
     DataSet_3D* Eww_;       ///< Water-water energy
     DataSet_3D* dTStrans_;  ///< Solvent translation entropy
@@ -218,11 +222,16 @@ class Action_GIST : public Action {
     DataSet_3D* dTSsix_;    ///< Solvent entropy estimate from combined trans/rotate
     DataSet_3D* neighbor_;  ///< Number of neighbors within 3.5 Angstrom*
     DataSet_3D* dipole_;    ///< Mean dipole moment
+    DataSet_3D* Esw_norm_;       ///< Normalized solute-water energy
+    DataSet_3D* Eww_norm_;       ///< Normalized water-water energy
+    DataSet_3D* dTStrans_norm_;  ///< Normalized solvent translation entropy
+    DataSet_3D* dTSorient_norm_; ///< Normalized solvent orentational entropy
     // GIST double grid datasets
     DataSet_3D* order_;     ///< Average tetrahedral order parameter for solvent, qtet
     DataSet_3D* dipolex_;   ///< Water dipole (X)*
     DataSet_3D* dipoley_;   ///< Water dipole (Y)*
     DataSet_3D* dipolez_;   ///< Water dipole (Z)*
+    DataSet_3D* quats_;     ///< Quaternions
     // PME GIST double grid datasets
     DataSet_3D* PME_;       ///< The PME nonbond interaction( charge-charge + vdw) cal for water
     DataSet_3D* U_PME_;     ///< The PME nonbond energy for solute atoms
@@ -265,6 +274,7 @@ class Action_GIST : public Action {
 #   endif
 
     Xarray voxel_xyz_; ///< Coords for all waters in each voxel.*
+    Varray substruc_xyz_; ///< Coords for the three points (atoms or com) defining the orientation of the solvent molecule.*
     Xarray voxel_Q_;   ///< w4, x4, y4, z4 for all waters in each voxel.*
 
     Darray OnGrid_XYZ_;             ///< XYZ coordinates for on-grid waters.*
@@ -299,6 +309,8 @@ class Action_GIST : public Action {
     CpptrajFile* datafile_;    ///< GIST output
     CpptrajFile* eijfile_;     ///< Eij matrix output
     CpptrajFile* infofile_;    ///< GIST info
+    CpptrajFile* quatfile_;    ///< Quaternion info
+    CpptrajFile* febissfile_;  ///< FEBISS placed solvents
     std::string prefix_;       ///< Output file name prefix
     std::string ext_;
     TextFormat fltFmt_;        ///< Output file format for floating point values
@@ -322,10 +334,16 @@ class Action_GIST : public Action {
 #   endif
     bool doOrder_;             ///< If true do the order calc
     bool doEij_;               ///< If true do the i-j energy calc
+    bool skipNeighbor_;        ///< If true skip the neighbor calc
     bool skipE_;               ///< If true skip the nonbond energy calc
     bool skipS_;               ///< If true does not calculate entropy
     bool exactNnVolume_;       ///< If true use the exact volume equation for the NN entropy
     bool useCom_;              ///< If true use the COM as the molecular center; If false, use the first atom according to rigidAtomIndices.
+    bool rigidatoms_;           ///< If true rigidatoms are given by name.
+    bool rigid_idx_;           ///< If true rigidatoms are given by indices.
+    bool quat_;                ///< If true print quaternions per voxel.
+    bool norm_;                ///< If true print normalized datasets.
+    bool febiss_;              ///< If true place febiss solvents.
     bool setupSuccessful_;     ///< Used to skip Print() if setup failed.
 #   ifdef MPI
     Parallel::Comm trajComm_;  ///< Communicator across trajectory

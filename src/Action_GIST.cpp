@@ -11,6 +11,7 @@
 #include "StringRoutines.h"
 #include "DistRoutines.h"
 #include "GistEntropyUtils.h"
+#include "Analysis_Febiss.h"
 #ifdef _OPENMP
 # include <omp.h>
 #endif
@@ -73,7 +74,9 @@ Action_GIST::Action_GIST() :
   use_PL_(true),
   PL_active_(false),
   PL_cut_(10.0),
+  rigidAtomIndices_(),
   rigidAtomNames_(3),
+  pop_(0),
   Esw_(0),
   Eww_(0),
   dTStrans_(0),
@@ -85,11 +88,16 @@ Action_GIST::Action_GIST() :
   dipolex_(0),
   dipoley_(0),
   dipolez_(0),
+  Esw_norm_(0),
+  Eww_norm_(0),
+  dTStrans_norm_(0),
+  dTSorient_norm_(0),
   PME_(0),
   U_PME_(0),
   ww_Eij_(0),
   CurrentParm_(0),
   datafile_(0),
+  quatfile_(0),
   eijfile_(0),
   infofile_(0),
   fltFmt_(TextFormat::GDOUBLE),
@@ -111,9 +119,13 @@ Action_GIST::Action_GIST() :
 # endif
   doOrder_(false),
   doEij_(false),
+  skipNeighbor_(false),
   skipE_(false),
   exactNnVolume_(false),
   useCom_(true),
+  quat_(false),
+  norm_(false),
+  febiss_(false),
   setupSuccessful_(false),
   watCountSubvol_(-1)
 {}
@@ -128,7 +140,7 @@ void Action_GIST::Help() const {
           "\t[prefix <filename prefix>] [ext <grid extension>] [out <output suffix>]\n"
           "\t[floatfmt {double|scientific|general}] [floatwidth <fw>] [floatprec <fp>]\n"
           "\t[intwidth <iw>] [oldnnvolume] [nnsearchlayers <nlayers>] [solute <mask>] [solventmols <str>]\n"
-          "\t[rigidatoms <i1> <i2> <i3>] [nocom]\n"
+          "\t[rigidatoms <i1> <i2> <i3>] [rigid_idx <i1> <i2> <i3>] [nocom] [quat] [norm] [febiss]\n"
           "\t[info <info suffix>]\n");
 #         ifdef LIBPME
           mprintf("\t[nopme|pme %s\n\t %s\n\t %s]\n", EwaldOptions::KeywordsCommon1(), EwaldOptions::KeywordsCommon2(), EwaldOptions::KeywordsPME());
@@ -196,8 +208,13 @@ Action::RetType Action_GIST::Init(ArgList& actionArgs, ActionInit& init, int deb
                                    actionArgs.getKeyInt("floatprec", -1) );
   intFmt_.SetFormatWidth( actionArgs.getKeyInt("intwidth", 0) );
   // Other keywords
+  skipNeighbor_ = actionArgs.hasKey("skipN");
   double neighborCut = actionArgs.getKeyDouble("neighborcut", 3.5);
   NeighborCut2_ = neighborCut * neighborCut;
+  if (skipNeighbor_ && neighborCut != 3.5) {
+    mprintf("Warning: Keyword [neighborcut] has no effect when [skipN] is also given.\n");
+  }
+
   exactNnVolume_ = !actionArgs.hasKey("oldnnvolume");
   nNnSearchLayers_ = actionArgs.getKeyInt("nnsearchlayers", 1);
   imageOpt_.InitImaging( !(actionArgs.hasKey("noimage")), actionArgs.hasKey("nonortho") );
@@ -210,6 +227,14 @@ Action::RetType Action_GIST::Init(ArgList& actionArgs, ActionInit& init, int deb
   }
   doEij_ = actionArgs.hasKey("doeij");
   useCom_ = !actionArgs.hasKey("nocom");
+  quat_ = actionArgs.hasKey("quat");
+  norm_ = actionArgs.hasKey("norm");
+  febiss_ = actionArgs.hasKey("febiss");
+
+  if (quat_) { /** copied from infofile above*/
+    quatfile_ = init.DFL().AddCpptrajFile(prefix_+"-"+"quats.dat","Quaternion output");
+    if (quatfile_ == 0) return Action::ERR;
+  }
 #ifdef CUDA
   if (this->doEij_) {
     mprinterr("Error: 'doeij' cannot be specified when using CUDA.\n");
@@ -327,7 +352,37 @@ Action::RetType Action_GIST::Init(ArgList& actionArgs, ActionInit& init, int deb
     rigidAtomNames_[0] = indArgs.GetStringNext();
     rigidAtomNames_[1] = indArgs.GetStringNext();
     rigidAtomNames_[2] = indArgs.GetStringNext();
+    rigidatoms_ = true;
+  } else {
+    rigidatoms_ = false;
   }
+  ArgList ridxArgs = actionArgs.GetNstringKey("rigid_idx", 3);
+  if ( !ridxArgs.empty() ) {
+    if (rigidatoms_){
+      mprinterr("Error: [rigidatoms] and [rigid_idx] cannot be set at the same to avoid ambiguity.\n");
+      return Action::ERR;
+    } else {
+    rigidAtomIndices_[0] = ridxArgs.getNextInteger(-2); //-2 since -1 is for com
+    rigidAtomIndices_[1] = ridxArgs.getNextInteger(-2); //-2 since -1 is for com
+    rigidAtomIndices_[2] = ridxArgs.getNextInteger(-2); //-2 since -1 is for com
+    }
+    if (rigidAtomIndices_[0] < -1 || rigidAtomIndices_[1] < -1 || rigidAtomIndices_[2] < -1) {
+      mprinterr("Error: Rigid atom indices must be integers in the interval [0, {number of atoms in the main solvent} - 1] but are %i, %i, %i. \n", rigidAtomIndices_[0], rigidAtomIndices_[1], rigidAtomIndices_[2]);
+      return Action::ERR;
+      } else if (!useCom_ && rigidAtomIndices_[0] == -1) {
+      mprinterr("Error: Cannot set [nocom] and the first [rigid_idx] to -1 (which stands for center of mass) at the same time\n");
+      return Action::ERR;
+      } else {
+      if (rigidAtomIndices_[0] == -1 && !skipNeighbor_) {
+      skipNeighbor_ = true;
+      mprintf("Warning: Skipping the neighbor calculation since the first [rigid_idx] was chosen to be -1 (which stands for center of mass).\n");
+      }
+      rigid_idx_ = true;
+    }
+  } else {
+    rigid_idx_ = false;
+  }
+
   soluteMask_ = actionArgs.GetStringKey("solute", "");
   solventNames_ = split_string(actionArgs.GetStringKey("solventmols"), ",");
   // Data set name
@@ -336,7 +391,7 @@ Action::RetType Action_GIST::Init(ArgList& actionArgs, ActionInit& init, int deb
     dsname_ = init.DSL().GenerateDefaultName("GIST");
 
   // Set up DataSets.
-
+  pop_ = AddDatasetAndFile("population", prefix_ + "-population" + ext_, DataSet::GRID_FLT);
   Esw_ = AddDatasetAndFile("Esw", prefix_ + "-Esw-dens" + ext_, DataSet::GRID_FLT);
   Eww_ = AddDatasetAndFile("Eww", prefix_ + "-Eww-dens" + ext_, DataSet::GRID_FLT);
   dTStrans_ = AddDatasetAndFile("dTStrans", prefix_ + "-dTStrans-dens" + ext_, DataSet::GRID_FLT);
@@ -348,6 +403,15 @@ Action::RetType Action_GIST::Init(ArgList& actionArgs, ActionInit& init, int deb
   dipolex_ = AddDatasetAndFile("dipolex", prefix_ + "-dipolex-dens" + ext_, DataSet::GRID_DBL);
   dipoley_ = AddDatasetAndFile("dipoley", prefix_ + "-dipoley-dens" + ext_, DataSet::GRID_DBL);
   dipolez_ = AddDatasetAndFile("dipolez", prefix_ + "-dipolez-dens" + ext_, DataSet::GRID_DBL);
+  if (norm_){
+    Esw_norm_ = AddDatasetAndFile("Esw_norm", prefix_ + "-Esw_norm" + ext_, DataSet::GRID_FLT);
+    Eww_norm_ = AddDatasetAndFile("Eww_norm", prefix_ + "-Eww_norm" + ext_, DataSet::GRID_FLT);
+    dTStrans_norm_ = AddDatasetAndFile("dTStrans_norm", prefix_ + "-dTStrans_norm" + ext_, DataSet::GRID_FLT);
+    dTSorient_norm_ = AddDatasetAndFile("dTSorient_norm", prefix_ + "-dTSorient_norm" + ext_, DataSet::GRID_FLT);
+  }
+  if (febiss_){
+    febissfile_ = init.DFL().AddCpptrajFile("febiss.dat", "Febiss output");
+  }
 
   if (!Esw_ || !Eww_ || !dTStrans_ || !dTSorient_ || !dTSsix_ || !neighbor_ || !dipole_ || !order_
       || !dipolex_ || !dipoley_ || !dipolez_) {
@@ -403,6 +467,7 @@ Action::RetType Action_GIST::Init(ArgList& actionArgs, ActionInit& init, int deb
   N_solute_atoms_.assign( MAX_GRID_PT_, 0);
   N_hydrogens_.assign( MAX_GRID_PT_, 0 );
   voxel_xyz_.resize( MAX_GRID_PT_ ); // [] = X Y Z
+  substruc_xyz_.resize( 3 );
   voxel_Q_.resize( MAX_GRID_PT_ ); // [] = W4 X4 Y4 Z4
 
 # ifdef _OPENMP
@@ -465,7 +530,11 @@ Action::RetType Action_GIST::Init(ArgList& actionArgs, ActionInit& init, int deb
       pmeOpts_.PrintOptions();
     }
   }
+  if (skipNeighbor_) {
+    mprintf("\tSkipping neighbor calculation.\n");
+  } else {
   mprintf("\tCut off for determining solvent O-O neighbors is %f Ang\n", sqrt(NeighborCut2_));
+  }
   if (doEij_) {
     mprintf("\tComputing and printing water-water Eij matrix, output to '%s'\n",
             eijfile_->Filename().full());
@@ -591,7 +660,7 @@ Action::RetType Action_GIST::Setup(ActionSetup& setup) {
   // NOTE: these are just guesses
   O_idxs_.reserve( setup.Top().Nsolvent() );
   atomIsSolute_.assign(setup.Top().Natom(), false);
-  atomIsSolventO_.assign(setup.Top().Natom(), false);
+  atomIsSolventO_.assign(setup.Top().Natom(), false); //stays all false if skipN is given or rigidAtomIndices_[0] == -1
   U_idxs_.reserve(setup.Top().Natom()-setup.Top().Nsolvent()*nMolAtoms_);
 
   setSolventType(setup.Top());
@@ -611,13 +680,30 @@ Action::RetType Action_GIST::Setup(ActionSetup& setup) {
       if (isFirstSolvent) {
         error = setSolventProperties(*mol, setup.Top());
         analyzeSolventElements(*mol, setup.Top());
-        if (!setRigidAtomIndices(*mol, setup.Top())) { mprinterr("Failed to set indices of rigid atoms.\n"); error = 1; }
-        if (rigidAtomIndices_[0] < 0 || rigidAtomIndices_[0] >= (int)nMolAtoms_
-            || rigidAtomIndices_[1] < 0 || rigidAtomIndices_[1] >= (int)nMolAtoms_
-            || rigidAtomIndices_[2] < 0 || rigidAtomIndices_[2] >= (int)nMolAtoms_) {
-          mprinterr("All rigidatomindices must be between 1 and the number of atoms per solvent.\n");
+        for (unsigned int i = 0; i < 3; ++i) {
+          if (rigidAtomIndices_[i] == -1){
+            rigidAtomNames_[i] = "COM";
+          }
+          else {
+            rigidAtomNames_[i] = setup.Top()[mol_start+rigidAtomIndices_[i]].Name().Truncated();
+          }
+        }
+        
+        if (!rigid_idx_){ //if rigid_idx are given as command -> no need for settingRigidAtomIndices
+          if (!setRigidAtomIndices(*mol, setup.Top())) { mprinterr("Failed to set indices of rigid atoms.\n"); error = 1; }
+        }
+        if (rigidAtomIndices_[0] < -1 || rigidAtomIndices_[0] >= (int)nMolAtoms_ //-1 is now a valid value which stands for the COM to be used as central point
+            || rigidAtomIndices_[1] < -1 || rigidAtomIndices_[1] >= (int)nMolAtoms_
+            || rigidAtomIndices_[2] < -1 || rigidAtomIndices_[2] >= (int)nMolAtoms_) {
+          mprinterr("The first and second rigidatomindices must be between 0 and the number of atoms per solvent - 1. Only the first integer can be -1 corresponding to the center of mass\n");
           error = 1;
         }
+        mprintf("\trigidatom[0] = %s, which corresponds to rigid_idx = %i \n", rigidAtomNames_[0].c_str(), rigidAtomIndices_[0]);
+        mprintf("\trigidatom[1] = %s, which corresponds to rigid_idx = %i \n", rigidAtomNames_[1].c_str(),rigidAtomIndices_[1]);
+        mprintf("\trigidatom[2] = %s, which corresponds to rigid_idx = %i \n", rigidAtomNames_[2].c_str(),rigidAtomIndices_[2]);
+
+        std::set<int> rigid_idx_set{rigidAtomIndices_[0],rigidAtomIndices_[1], rigidAtomIndices_[2]};
+        if (rigid_idx_set.size() < 3) { mprinterr("At least two equal rigid atoms are given which is not enough to create a suitable substructure.\n"); error = 1; }
         if (!createAtomDensityDatasets()) { mprinterr("Failed to create datasets for atomic densities.\n"); error = 1; }
         isFirstSolvent = false;
       } else {
@@ -628,7 +714,9 @@ Action::RetType Action_GIST::Setup(ActionSetup& setup) {
                   setup.Top().TruncResNameNum( setup.Top()[mol_start].ResNum() ).c_str());
         return Action::ERR;
       }
+      if (rigidAtomIndices_[0] != -1 && !skipNeighbor_) { //if false, atomIsSolventO_ stays all false -> comparison is_O_O for the neighbor calculation always evaluates to false -> no Neighbors are collected
       atomIsSolventO_[mol_start+rigidAtomIndices_[0]] = true;
+      }
     }
   }
   #ifdef CUDA
@@ -853,10 +941,10 @@ bool Action_GIST::setRigidAtomIndices(const Molecule& mol, const Topology& top)
         mprinterr("Error: Solvent atom %s was not found.\n", rigidAtomNames_[i].c_str());
         return false;
       }
+      }
     }
-  }
-  mprintf("\tUsing atoms %s-%s-%s as rigid substructure of the solvent.\n",
-          *top[mol_begin+rigidAtomIndices_[1]].Name(), *top[mol_begin+rigidAtomIndices_[0]].Name(), *top[mol_begin+rigidAtomIndices_[2]].Name());
+    mprintf("\tUsing atoms %s-%s-%s as rigid substructure of the solvent.\n",
+            *top[mol_begin+rigidAtomIndices_[1]].Name(), *top[mol_begin+rigidAtomIndices_[0]].Name(), *top[mol_begin+rigidAtomIndices_[2]].Name());
   return true;
 }
 
@@ -1574,8 +1662,11 @@ Action::RetType Action_GIST::DoAction(int frameNum, ActionFrame& frm) {
           ++N_main_solvent_[voxel];
           // Record XYZ coords of water atoms (nonEP) in voxel TODO need EP?
           if (!skipS_) {
+            Varray::iterator it = substruc_xyz_.begin();
+            Vec3 idx_xyz_;
             Vec3 H1_wat, H2_wat;
             if (mover_.NeedsMove()) {
+              mprintf("Rotated grid!");
               // Need to rotate into reference frame of the rotated grid.
               // Pivot point is the center of the grid.
               Vec3 ongrid = mover_.RotMatrix().TransposeMult( mol_center - gridBin_->GridCenter() );
@@ -1585,12 +1676,15 @@ Action::RetType Action_GIST::DoAction(int frameNum, ActionFrame& frm) {
 #             ifdef DEBUG_GIST
               if (debugOut_ != 0) debugOut_->Printf("\t\tVXYZ %12.4f %12.4f %12.4f\n", ongrid[0], ongrid[1], ongrid[2]);
 #             endif
-              // Get O-HX vectors
-              Vec3 O_XYZ  = mover_.RotMatrix().TransposeMult( Vec3(frm.Frm().XYZ(mol_first + rigidAtomIndices_[0])) - gridBin_->GridCenter() );
-              Vec3 H1_XYZ = mover_.RotMatrix().TransposeMult( Vec3(frm.Frm().XYZ(mol_first + rigidAtomIndices_[1])) - gridBin_->GridCenter() );
-              Vec3 H2_XYZ = mover_.RotMatrix().TransposeMult( Vec3(frm.Frm().XYZ(mol_first + rigidAtomIndices_[2])) - gridBin_->GridCenter() );
-              H1_wat = H1_XYZ - O_XYZ;
-              H2_wat = H2_XYZ - O_XYZ;
+             for (int i = 0; i < 3; ++i) {
+                if (rigidAtomIndices_[i] != -1){
+                  idx_xyz_ = mover_.RotMatrix().TransposeMult( Vec3(frm.Frm().XYZ(mol_first + rigidAtomIndices_[i])) - gridBin_->GridCenter() );
+                } else {
+                idx_xyz_ = mover_.RotMatrix().TransposeMult( frm.Frm().VCenterOfMass(mol_first, mol_end) - gridBin_->GridCenter() );
+                }
+              substruc_xyz_.insert(it + i, idx_xyz_);
+              }
+              //Get O-HX vectors
             } else {
               voxel_xyz_[voxel].push_back( mol_center[0] );
               voxel_xyz_[voxel].push_back( mol_center[1] );
@@ -1599,12 +1693,18 @@ Action::RetType Action_GIST::DoAction(int frameNum, ActionFrame& frm) {
               if (debugOut_ != 0) debugOut_->Printf("\t\tVXYZ %12.4f %12.4f %12.4f\n", mol_center[0], mol_center[1], mol_center[2]);
 #             endif
               // Get O-HX vectors
-              const double* O_XYZ  = frm.Frm().XYZ( mol_first + rigidAtomIndices_[0] );
-              const double* H1_XYZ = frm.Frm().XYZ( mol_first + rigidAtomIndices_[1] );
-              const double* H2_XYZ = frm.Frm().XYZ( mol_first + rigidAtomIndices_[2] );
-              H1_wat = Vec3( H1_XYZ[0]-O_XYZ[0], H1_XYZ[1]-O_XYZ[1], H1_XYZ[2]-O_XYZ[2] );
-              H2_wat = Vec3( H2_XYZ[0]-O_XYZ[0], H2_XYZ[1]-O_XYZ[1], H2_XYZ[2]-O_XYZ[2] );
+              for (int i = 0; i < 3; ++i) {
+                if (rigidAtomIndices_[i] != -1){
+                  idx_xyz_ = frm.Frm().XYZ( mol_first + rigidAtomIndices_[i] );
+                } else {
+                  idx_xyz_ = frm.Frm().VCenterOfMass( mol_first, mol_end );
+                }
+              substruc_xyz_[i]=idx_xyz_;
+              }
+            H1_wat = substruc_xyz_[1] - substruc_xyz_[0];
+            H2_wat = substruc_xyz_[2] - substruc_xyz_[0];
             }
+
             H1_wat.Normalize();
             H2_wat.Normalize();
 #           ifdef DEBUG_GIST
@@ -1837,9 +1937,9 @@ bool Action_GIST::isMainSolvent(int atom) const
 /** Center (COM or "central atom") of a molecule. */
 Vec3 Action_GIST::calcMolCenter(const ActionFrame& frm, int begin, int end) const
 {
-  if (useCom_) {
+  if (useCom_) { //no need to deal with rigidatomindices_[0] == -1, since this is only for binning the solvent molecule
     return frm.Frm().VCenterOfMass(begin, end);
-  } else {
+  } else { //no need to deal with rigidatomindices_[0] == -1, since this is only for binning the solvent molecule. also, there is no possibility for the case of !useCom_ and rigidatomindices_[0] == -1 since this is cared for when reading in the [rigid_idx]
     return Vec3(frm.Frm().XYZ(begin + rigidAtomIndices_[0]));
   }
 }
@@ -2158,12 +2258,16 @@ int Action_GIST::CalcTranslationalEntropy(unsigned int gridPointStart, unsigned 
   }
   ParallelProgress te_progress( gridPointEnd - gridPointStart );
   int n_finished = 0;
+      #ifdef DEBUG_FEBISS
+      int nw_gridpoint_frame = 0;
+      #endif
 # ifdef _OPENMP
 # pragma omp parallel shared(n_finished) firstprivate(te_progress)
   {
   te_progress.SetThread( omp_get_thread_num() );
 # pragma omp for
 # endif
+
   for (unsigned int gr_pt = gridPointStart; gr_pt < gridPointEnd; gr_pt++) {
     te_progress.Update( n_finished );
     if (! this->skipS_) {
@@ -2223,6 +2327,10 @@ int Action_GIST::CalcTranslationalEntropy(unsigned int gridPointStart, unsigned 
             //mprintf("DEBUG1: dbl=%f NNs=%f\n", dbl, NNs);
           }
         } // END loop over all waters for this voxel
+        #ifdef DEBUG_FEBISS
+        mprintf("vox_nwts %i at gr_pt %i with nw_total %i\n", vox_nwts, gr_pt, nw_total);
+        nw_gridpoint_frame += nw_total;
+        #endif
 #       ifdef DEBUG_GIST_6D
         if (debugOut_ != 0) debugOut_->Printf("strans_norm= %12.4f  ssix_norm= %12.4f\n", strans_norm, ssix_norm);
 #       endif
@@ -2247,6 +2355,9 @@ int Action_GIST::CalcTranslationalEntropy(unsigned int gridPointStart, unsigned 
       }
     }
   } // END loop over all grid points (voxels)
+  #ifdef DEBUG_FEBISS
+  mprintf("nw_gridpoint_frame = %i\n",nw_gridpoint_frame);
+  #endif
   #ifdef _OPENMP
   }
   #endif
@@ -2276,7 +2387,7 @@ void Action_GIST::Print() {
   if (! this->skipS_) {
     // LOOP over all voxels
     gist_print_OE_.Start();
-    mprintf("\tCalculating orientational entropy:\n");
+    mprintf("\tCalculating orientational entropy using %s-%s-%s as substructure:\n",rigidAtomNames_[1].c_str(),rigidAtomNames_[0].c_str(),rigidAtomNames_[2].c_str());
     ParallelProgress oe_progress( MAX_GRID_PT_ );
     int n_finished = 0;
     int n_single_occ = 0;
@@ -2359,7 +2470,7 @@ void Action_GIST::Print() {
     infofile_->Printf("Total referenced orientational entropy of the grid:"
                       " dTSorient = %9.5f kcal/mol, Nf=%d\n", SumDataSet(*dTSorient_) / NFRAME_, NFRAME_);
     
-    gist_print_OE_.Start();
+    gist_print_OE_.Stop();
   }
   // Compute translational entropy for each voxel
   gist_print_TE_.Start();
@@ -2393,8 +2504,10 @@ void Action_GIST::Print() {
   // free some memory before allocating all those Farrays for the -dens and -norm data.
   voxel_xyz_.clear();
   voxel_xyz_.shrink_to_fit();
+if (!quat_) { // must not be cleared if needed for quaternion output
   voxel_Q_.clear();
   voxel_Q_.shrink_to_fit();
+  }
 
   // Remove solute-solvent energy in voxels without solvent (i.e., at the solute)
   for (size_t i = 0; i < Esw_->Size(); ++i) {
@@ -2465,6 +2578,7 @@ void Action_GIST::Print() {
   Darray order_norm = NormalizeDataSet<double>(*order_, N_main_solvent_);
 
   // Write final values to the datasets
+  CopyArrayToDataSet(N_main_solvent_, *pop_);
   CopyArrayToDataSet(Esw_dens, *Esw_);
   CopyArrayToDataSet(Eww_dens, *Eww_);
   if (usePme_ && !skipE_) {
@@ -2480,6 +2594,13 @@ void Action_GIST::Print() {
   CopyArrayToDataSet(dipolez_dens, *dipolez_);
   CopyArrayToDataSet(order_norm, *order_);
   CopyArrayToDataSet(neighbor_norm, *neighbor_);
+
+  if (norm_){
+  CopyArrayToDataSet(Esw_norm, *Esw_norm_);
+  CopyArrayToDataSet(Eww_norm, *Eww_norm_);
+  CopyArrayToDataSet(dTStrans_norm, *dTStrans_norm_);
+  CopyArrayToDataSet(dTSorient_norm, *dTSorient_norm_);
+  }
 
   for (unsigned int gr_pt = 0; gr_pt < MAX_GRID_PT_; gr_pt++)
   {
@@ -2522,9 +2643,31 @@ void Action_GIST::Print() {
     }
     datafile_->Printf(" Dipole_x-dens(D/A^3) Dipole_y-dens(D/A^3) Dipole_z-dens(D/A^3)"
                       " Dipole-dens(D/A^3) neighbor-dens(1/A^3) neighbor-norm order-norm\n");
-    // Loop over voxels
+
+
+
+  // Write quaternions for each voxel.  
+  if (quatfile_ != 0) { /** copied from datafile above*/
+    mprintf("\tWriting quaternion results for each voxel:\n");
+    const char* gistOutputVersion = "v4";
+    // Do the header
+    quatfile_->Printf("GIST Output %s "
+                      "spacing=%.4f center=%.6f,%.6f,%.6f dims=%i,%i,%i rigid_idx=%i,%i,%i rigidatomnames=%s,%s,%s\n"
+                      "nsolvents=%i nframes=%i\n"
+                      "voxel xcoord ycoord zcoord w x y z\n",
+                      gistOutputVersion, gridspacing_,
+                      gridcntr_[0], gridcntr_[1], gridcntr_[2],
+                      griddim_[0], griddim_[1], griddim_[2],
+                      rigidAtomIndices_[0],rigidAtomIndices_[1],rigidAtomIndices_[2],
+                      rigidAtomNames_[0].c_str(), rigidAtomNames_[1].c_str(), rigidAtomNames_[2].c_str(),
+                      NSOLVENT_, NFRAME_);
+  }
+
     DataFilePrinter printer(*datafile_, fltFmt_, intFmt_);
+    DataFilePrinter quatprinter(*quatfile_, fltFmt_, intFmt_);
     ProgressBar O_progress( MAX_GRID_PT_ );
+
+    // Loop over voxels
     for (unsigned int gr_pt = 0; gr_pt < MAX_GRID_PT_; gr_pt++) {
       O_progress.Update( gr_pt );
       size_t i, j, k;
@@ -2554,8 +2697,21 @@ void Action_GIST::Print() {
       printer << dipolex_dens[gr_pt] << dipoley_dens[gr_pt] << dipolez_dens[gr_pt] 
               << (*dipole_)[gr_pt] << neighbor_dens[gr_pt] << neighbor_norm[gr_pt] << order_norm[gr_pt];
       printer.newline();
+
+      if (quat_) {
+        for (int n = 0; n < N_main_solvent_[gr_pt]; ++n) { /** from rotational entropy. Total number of solvent molecules that have been in this voxel.*/
+        quatprinter << gr_pt << XYZ[0] << XYZ[1] << XYZ[2] << voxel_Q_[gr_pt][n*4+0] << voxel_Q_[gr_pt][n*4+1] << voxel_Q_[gr_pt][n*4+2] << voxel_Q_[gr_pt][n*4+3];
+        quatprinter.newline();
+        }
+      }
     } // END loop over voxels
+    if (febiss_) {
+      Analysis_Febiss febiss = Analysis_Febiss(pop_,dTSorient_norm_,dTStrans_norm_,Esw_norm_, Eww_norm_,febissfile_,BULK_DENS_,NFRAME_,NSOLVENT_);
+      febiss.Analyze();
+    }
   } // END datafile_ not null
+
+  
   gist_print_write_.Stop();
 
   // Write water-water interaction energy matrix

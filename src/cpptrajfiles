@@ -113,6 +113,7 @@ COMMON_SOURCES= \
         Analysis_CurveFit.cpp \
         Analysis_Divergence.cpp \
         Analysis_EvalPlateau.cpp \
+        Analysis_Febiss.cpp \
         Analysis_FFT.cpp \
         Analysis_HausdorffDistance.cpp \
         Analysis_Hist.cpp \
